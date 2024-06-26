@@ -7,7 +7,7 @@ from scipy.fft import fft
 # 분석할 폴더 경로
 input_folder1 = r'C:\Users\aspp3\OneDrive\바탕 화면\dataSet\real' #real
 input_folder2 = r'C:\Users\aspp3\OneDrive\바탕 화면\dataSet\fake' #fake
-output_file = r'C:\Users\aspp3\OneDrive\문서\GitHub\FakeAudio'
+output_file = r'C:\Users\aspp3\OneDrive\바탕 화면\dataSet\Result.csv'
 
 # 출력 폴더가 없으면 생성
 output_folder = os.path.dirname(output_file)

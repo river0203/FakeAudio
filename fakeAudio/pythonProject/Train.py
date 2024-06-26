@@ -10,7 +10,7 @@ import joblib
 import matplotlib.pyplot as plt
 
 # 기존 학습 데이터셋 로드 및 준비
-file_path = '/Users/iseongjun/Downloads/resultFile_sorted.csv'  # 학습 데이터셋 경로
+file_path = r'C:\Users\aspp3\OneDrive\바탕 화면\dataSet\Result.csv'  # 학습 데이터셋 경로
 data = pd.read_csv(file_path)
 
 # 특징 및 라벨 준비
@@ -46,7 +46,7 @@ print("Classification Report:")
 print(classification_rep)
 
 # 테스트 데이터 경로
-test_data_path = '/Users/iseongjun/Downloads/Audio/testData/test_wav'
+test_data_path = r'C:\Users\aspp3\OneDrive\바탕 화면\dataSet\for-2seconds\testing'
 test_files = [os.path.join(test_data_path, f) for f in os.listdir(test_data_path) if f.endswith('.wav')]
 
 # 특징 추출 함수
@@ -110,7 +110,7 @@ prediction_results = pd.DataFrame(results)
 print(prediction_results)
 
 # 결과를 CSV 파일로 저장
-csv_output_path = '/Users/iseongjun/Downloads/Audio/testData/prediction_results.csv'
+csv_output_path = r'/C:\Users\aspp3\OneDrive\바탕 화면\dataSet\prediction_results.csv'
 prediction_results.to_csv(csv_output_path, index=False)
 
 # 결과를 이미지 표로 저장
@@ -119,6 +119,6 @@ ax.axis('tight')
 ax.axis('off')
 ax.table(cellText=prediction_results.values, colLabels=prediction_results.columns, cellLoc='center', loc='center')
 
-image_output_path = '/Users/iseongjun/Downloads/Audio/testData/prediction_results.png'
+image_output_path = r'C:\Users\aspp3\OneDrive\바탕 화면\dataSet\prediction_results.png'
 plt.savefig(image_output_path)
 plt.show()
