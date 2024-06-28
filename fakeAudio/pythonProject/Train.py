@@ -1,8 +1,9 @@
 import os
 import librosa
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score
 
 
@@ -63,17 +64,36 @@ def load_data(folder_path):
 
 # 모델 훈련 및 검증
 def train_model(X, y):
+    # 데이터 정규화
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
+
+    # 하이퍼파라미터 튜닝
+    param_grid = {
+        'n_estimators': [100, 200],
+        'max_depth': [10, 20, None],
+        'min_samples_split': [2, 5],
+        'min_samples_leaf': [1, 2]
+    }
+    rf = RandomForestClassifier(random_state=42)
+    grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, n_jobs=-1)
+    grid_search.fit(X, y)
+    best_rf = grid_search.best_estimator_
+
+    # 앙상블 모델
+    gb = GradientBoostingClassifier(random_state=42)
+    model = VotingClassifier(estimators=[('rf', best_rf), ('gb', gb)], voting='soft')
+
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model = RandomForestClassifier(n_estimators=100, random_state=42)
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
     print(f'Training Accuracy: {accuracy}')
-    return model
+    return model, scaler
 
 
 # 테스트 데이터 로드
-def load_test_data(folder_path):
+def load_test_data(folder_path, scaler):
     features = []
     labels = []
     for label in ['real', 'fake']:
@@ -87,7 +107,9 @@ def load_test_data(folder_path):
                 feature = extract_features(y, sr)
                 features.append(feature)
                 labels.append(0 if label == 'real' else 1)
-    return np.array(features), np.array(labels)
+    X_test = np.array(features)
+    X_test = scaler.transform(X_test)
+    return X_test, np.array(labels)
 
 
 # 테스트 데이터 정확도 계산
@@ -106,10 +128,10 @@ test_folder_path = 'test_data'  # 'test_data/real' 및 'test_data/fake' 하위 �
 X_train, y_train = load_data(train_folder_path)
 
 # 모델 훈련
-model = train_model(X_train, y_train)
+model, scaler = train_model(X_train, y_train)
 
 # 테스트 데이터 로드
-X_test, y_test = load_test_data(test_folder_path)
+X_test, y_test = load_test_data(test_folder_path, scaler)
 
 # 모델 평가
 evaluate_model(model, X_test, y_test)
