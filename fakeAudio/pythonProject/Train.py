@@ -1,28 +1,65 @@
+import os
 import librosa
 import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
+
 # 오디오 데이터 로드
 def load_audio(file_path):
     y, sr = librosa.load(file_path, sr=None)
     return y, sr
 
-# MFCC 특성 추출
-def extract_mfcc(y, sr, n_mfcc=13):
-    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
-    mfccs = np.mean(mfccs.T, axis=0)  # 평균값을 사용하여 차원 축소
-    return mfccs
 
-# 데이터 로드 및 MFCC 추출
-def load_data(file_paths, labels):
+# 데이터 증강
+def augment_data(y, sr):
+    # Noise addition
+    noise = np.random.randn(len(y))
+    y_noise = y + 0.005 * noise
+
+    # Shifting the sound
+    y_roll = np.roll(y, 1600)
+
+    return [y, y_noise, y_roll]
+
+
+# MFCC 및 추가 특징 추출
+def extract_features(y, sr, n_mfcc=13):
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
+    chroma = librosa.feature.chroma_stft(y=y, sr=sr)
+    mel = librosa.feature.melspectrogram(y=y, sr=sr)
+    contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
+
+    features = np.hstack([
+        np.mean(mfccs.T, axis=0),
+        np.mean(chroma.T, axis=0),
+        np.mean(mel.T, axis=0),
+        np.mean(contrast.T, axis=0)
+    ])
+
+    return features
+
+
+# 데이터 로드 및 특징 추출
+def load_data(folder_path):
     features = []
-    for file_path in file_paths:
-        y, sr = load_audio(file_path)
-        mfcc = extract_mfcc(y, sr)
-        features.append(mfcc)
+    labels = []
+    for label in ['real', 'fake']:
+        label_path = os.path.join(folder_path, label)
+        if not os.path.isdir(label_path):
+            continue
+        for file_name in os.listdir(label_path):
+            if file_name.endswith('.wav'):
+                file_path = os.path.join(label_path, file_name)
+                y, sr = load_audio(file_path)
+                augmented_data = augment_data(y, sr)
+                for y_aug in augmented_data:
+                    feature = extract_features(y_aug, sr)
+                    features.append(feature)
+                    labels.append(0 if label == 'real' else 1)
     return np.array(features), np.array(labels)
+
 
 # 모델 훈련 및 검증
 def train_model(X, y):
@@ -31,31 +68,48 @@ def train_model(X, y):
     model.fit(X_train, y_train)
     y_pred = model.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
-    print(f'Accuracy: {accuracy}')
+    print(f'Training Accuracy: {accuracy}')
     return model
 
-# 딥페이크 오디오 탐지
-def detect_fake_audio(file_path, model):
-    y, sr = load_audio(file_path)
-    mfcc = extract_mfcc(y, sr)
-    mfcc = mfcc.reshape(1, -1)  # 모델 입력 형태로 변환
-    prediction = model.predict(mfcc)
-    return prediction[0]
 
-# 예제 데이터 (파일 경로와 레이블)
-file_paths = ['real_audio_1.wav', 'fake_audio_1.wav', 'real_audio_2.wav', 'fake_audio_2.wav']
-labels = [0, 1, 0, 1]  # 0: 실제 오디오, 1: 딥페이크 오디오
+# 테스트 데이터 로드
+def load_test_data(folder_path):
+    features = []
+    labels = []
+    for label in ['real', 'fake']:
+        label_path = os.path.join(folder_path, label)
+        if not os.path.isdir(label_path):
+            continue
+        for file_name in os.listdir(label_path):
+            if file_name.endswith('.wav'):
+                file_path = os.path.join(label_path, file_name)
+                y, sr = load_audio(file_path)
+                feature = extract_features(y, sr)
+                features.append(feature)
+                labels.append(0 if label == 'real' else 1)
+    return np.array(features), np.array(labels)
 
-# 데이터 로드
-X, y = load_data(file_paths, labels)
+
+# 테스트 데이터 정확도 계산
+def evaluate_model(model, X_test, y_test):
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
+    print(f'Test Accuracy: {accuracy}')
+    return accuracy
+
+
+# 폴더 경로 설정
+train_folder_path = 'audio_dataset'  # 'audio_dataset/real' 및 'audio_dataset/fake' 하위 폴더 포함
+test_folder_path = 'test_data'  # 'test_data/real' 및 'test_data/fake' 하위 폴더 포함
+
+# 훈련 데이터 로드
+X_train, y_train = load_data(train_folder_path)
 
 # 모델 훈련
-model = train_model(X, y)
+model = train_model(X_train, y_train)
 
-# 탐지 예제
-file_path = 'unknown_audio.wav'
-result = detect_fake_audio(file_path, model)
-if result == 0:
-    print('Real Audio')
-else:
-    print('Fake Audio')
+# 테스트 데이터 로드
+X_test, y_test = load_test_data(test_folder_path)
+
+# 모델 평가
+evaluate_model(model, X_test, y_test)
