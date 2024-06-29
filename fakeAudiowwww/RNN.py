@@ -18,7 +18,7 @@ class RNNModel(nn.Module):
         out = self.fc(out[:, -1, :])
         return out
 
-def train_and_predict_rnn(X_train, y_train, X_test, num_epochs=30, learning_rate=0.0005, hidden_dim=256):
+def train_and_predict_rnn(X_train, y_train, X_test, num_epochs=30, learning_rate=0.0005, hidden_dim=256, return_model=False):
     input_dim = X_train.shape[1]
     output_dim = 1
 
@@ -53,6 +53,9 @@ def train_and_predict_rnn(X_train, y_train, X_test, num_epochs=30, learning_rate
     with torch.no_grad():
         rnn_outputs = model(X_test_tensor.to(device))
         rnn_pred = (torch.sigmoid(rnn_outputs).cpu().numpy() > 0.5).astype(int).squeeze()
+
+    if return_model:
+        return model, scaler
 
     torch.save(model.state_dict(), 'rnn_model.h5')
     joblib.dump(scaler, 'scaler_rnn.pkl')

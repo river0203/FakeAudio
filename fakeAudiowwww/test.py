@@ -3,6 +3,8 @@ import pandas as pd
 import numpy as np
 from sklearn.metrics import classification_report, accuracy_score
 import joblib
+import torch
+from RNN import RNNModel
 
 # 파일 경로
 test_data_path_with_labels = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/testDataCsv/testDataFeatureExtraction1234.csv'
@@ -15,32 +17,49 @@ X_test = test_data_with_labels.drop(['filename', 'voice_type'], axis=1)
 y_test = test_data_with_labels['voice_type'].apply(lambda x: 1 if x == 'AI' else 0)
 
 # 모델 불러오기
-svm_model = joblib.load(os.path.join(model_load_path, 'svm_model.pkl'))
-gb_model = joblib.load(os.path.join(model_load_path, 'gb_model.pkl'))
-rnn_model = joblib.load(os.path.join(model_load_path, 'rnn_model.pkl'))
+xgb_model = joblib.load(os.path.join(model_load_path, 'xgb_model.pkl'))
+lgb_model = joblib.load(os.path.join(model_load_path, 'lgb_model.pkl'))
+scaler_rnn = joblib.load(os.path.join(model_load_path, 'scaler_rnn.pkl'))
 
-# 예측 수행
-svm_pred = svm_model.predict(X_test)
-gb_pred = gb_model.predict(X_test)
-rnn_pred = rnn_model.predict(X_test)
+# RNN 모델 정의 및 불러오기
+input_dim = X_test.shape[1]
+hidden_dim = 256
+output_dim = 1
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+rnn_model = RNNModel(input_dim, hidden_dim, output_dim).to(device)
+rnn_model.load_state_dict(torch.load(os.path.join(model_load_path, 'rnn_model.h5')))
+rnn_model.eval()
+
+# RNN 모델 예측 준비
+X_test_scaled = scaler_rnn.transform(X_test)
+X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float32).unsqueeze(1).to(device)
+
+# RNN 예측 수행
+with torch.no_grad():
+    rnn_outputs = rnn_model(X_test_tensor)
+    rnn_pred = (torch.sigmoid(rnn_outputs).cpu().numpy() > 0.5).astype(int).squeeze()
+
+# 다른 모델의 예측 수행
+xgb_pred = xgb_model.predict(X_test)
+lgb_pred = lgb_model.predict(X_test)
 
 # 각 모델의 성능 평가
-svm_accuracy = accuracy_score(y_test, svm_pred)
-gb_accuracy = accuracy_score(y_test, gb_pred)
+xgb_accuracy = accuracy_score(y_test, xgb_pred)
+lgb_accuracy = accuracy_score(y_test, lgb_pred)
 rnn_accuracy = accuracy_score(y_test, rnn_pred)
 
-print(f"SVM Accuracy: {svm_accuracy}")
-print(f"Gradient Boosting Accuracy: {gb_accuracy}")
+print(f"XGBoost Accuracy: {xgb_accuracy}")
+print(f"LightGBM Accuracy: {lgb_accuracy}")
 print(f"RNN Accuracy: {rnn_accuracy}")
 
-# 성능에 비례한 가중치 계산 (간단히 정확도를 사용한 예)
-total_accuracy = svm_accuracy + gb_accuracy + rnn_accuracy
-svm_weight = svm_accuracy / total_accuracy
-gb_weight = gb_accuracy / total_accuracy
-rnn_weight = rnn_accuracy / total_accuracy
+# 다수결 방식으로 최종 예측 결정
+final_pred = []
+for xgb, lgb, rnn in zip(xgb_pred, lgb_pred, rnn_pred):
+    votes = [xgb, lgb, rnn]
+    final_pred.append(1 if votes.count(1) > votes.count(0) else 0)
 
-# 가중치를 적용한 최종 예측
-final_pred = np.round((svm_pred * svm_weight + gb_pred * gb_weight + rnn_pred * rnn_weight)).astype(int)
+final_pred = np.array(final_pred)
 
 # 예측 결과를 AI와 REAL로 변환
 final_pred_labels = ['AI' if pred == 1 else 'REAL' for pred in final_pred]
@@ -49,16 +68,16 @@ final_pred_labels = ['AI' if pred == 1 else 'REAL' for pred in final_pred]
 result_df = pd.DataFrame({
     'filename': test_data_with_labels['filename'],
     'true_label': test_data_with_labels['voice_type'],
-    'svm_pred': ['AI' if pred == 1 else 'REAL' for pred in svm_pred],
-    'gb_pred': ['AI' if pred == 1 else 'REAL' for pred in gb_pred],
+    'xgb_pred': ['AI' if pred == 1 else 'REAL' for pred in xgb_pred],
+    'lgb_pred': ['AI' if pred == 1 else 'REAL' for pred in lgb_pred],
     'rnn_pred': ['AI' if pred == 1 else 'REAL' for pred in rnn_pred],
     'final_pred': final_pred_labels
 })
 
-result_df_path = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/testDataResult/final_prediction_results_weighted.csv'
+result_df_path = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/testDataResult/testDataFeatureExtraction1234_final.csv'
 os.makedirs(os.path.dirname(result_df_path), exist_ok=True)
 result_df.to_csv(result_df_path, index=False)
 
 # 평가 결과 출력
 print(classification_report(y_test, final_pred, target_names=['REAL', 'AI'], zero_division=0))
-print('Final Accuracy with Weighted Ensemble:', accuracy_score(y_test, final_pred))
+print('Final Accuracy with Voting Ensemble:', accuracy_score(y_test, final_pred))
