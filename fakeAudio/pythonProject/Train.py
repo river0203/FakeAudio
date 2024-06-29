@@ -1,17 +1,19 @@
 import os
 import librosa
 import numpy as np
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, VotingClassifier
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Conv2D, MaxPooling2D, Flatten, Dropout
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.callbacks import EarlyStopping
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score
-
 
 # 오디오 데이터 로드
 def load_audio(file_path):
     y, sr = librosa.load(file_path, sr=None)
     return y, sr
-
 
 # 데이터 증강
 def augment_data(y, sr):
@@ -22,28 +24,23 @@ def augment_data(y, sr):
     # Shifting the sound
     y_roll = np.roll(y, 1600)
 
-    return [y, y_noise, y_roll]
+    # Pitch shifting
+    y_pitch = librosa.effects.pitch_shift(y, sr=sr, n_steps=2)
 
+    return [y, y_noise, y_roll, y_pitch]
 
 # MFCC 및 추가 특징 추출
-def extract_features(y, sr, n_mfcc=13):
+def extract_features(y, sr, n_mfcc=13, fixed_length=50):
     mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=n_mfcc)
-    chroma = librosa.feature.chroma_stft(y=y, sr=sr)
-    mel = librosa.feature.melspectrogram(y=y, sr=sr)
-    contrast = librosa.feature.spectral_contrast(y=y, sr=sr)
-
-    features = np.hstack([
-        np.mean(mfccs.T, axis=0),
-        np.mean(chroma.T, axis=0),
-        np.mean(mel.T, axis=0),
-        np.mean(contrast.T, axis=0)
-    ])
-
-    return features
-
+    if mfccs.shape[1] < fixed_length:
+        pad_width = fixed_length - mfccs.shape[1]
+        mfccs = np.pad(mfccs, pad_width=((0, 0), (0, pad_width)), mode='constant')
+    else:
+        mfccs = mfccs[:, :fixed_length]
+    return np.expand_dims(mfccs, axis=-1)
 
 # 데이터 로드 및 특징 추출
-def load_data(folder_path):
+def load_data(folder_path, fixed_length=50):
     features = []
     labels = []
     for label in ['real', 'fake']:
@@ -56,44 +53,54 @@ def load_data(folder_path):
                 y, sr = load_audio(file_path)
                 augmented_data = augment_data(y, sr)
                 for y_aug in augmented_data:
-                    feature = extract_features(y_aug, sr)
+                    feature = extract_features(y_aug, sr, fixed_length=fixed_length)
                     features.append(feature)
                     labels.append(0 if label == 'real' else 1)
     return np.array(features), np.array(labels)
 
+# CNN 모델 생성
+def create_cnn_model(input_shape):
+    model = Sequential()
+    model.add(Conv2D(32, kernel_size=(3, 3), activation='relu', input_shape=input_shape))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+
+    model.add(Conv2D(64, kernel_size=(3, 3), activation='relu'))
+    model.add(MaxPooling2D(pool_size=(2, 2)))
+    model.add(Dropout(0.25))
+
+    model.add(Flatten())
+    model.add(Dense(128, activation='relu'))
+    model.add(Dropout(0.5))
+    model.add(Dense(2, activation='softmax'))
+
+    model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+    return model
 
 # 모델 훈련 및 검증
 def train_model(X, y):
-    # 데이터 정규화
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X)
-
-    # 하이퍼파라미터 튜닝
-    param_grid = {
-        'n_estimators': [100, 200],
-        'max_depth': [10, 20, None],
-        'min_samples_split': [2, 5],
-        'min_samples_leaf': [1, 2]
-    }
-    rf = RandomForestClassifier(random_state=42)
-    grid_search = GridSearchCV(estimator=rf, param_grid=param_grid, cv=5, n_jobs=-1)
-    grid_search.fit(X, y)
-    best_rf = grid_search.best_estimator_
-
-    # 앙상블 모델
-    gb = GradientBoostingClassifier(random_state=42)
-    model = VotingClassifier(estimators=[('rf', best_rf), ('gb', gb)], voting='soft')
-
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
-    print(f'Training Accuracy: {accuracy}')
-    return model, scaler
 
+    y_train = to_categorical(y_train, num_classes=2)
+    y_test = to_categorical(y_test, num_classes=2)
+
+    input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3])
+    model = create_cnn_model(input_shape)
+
+    early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
+
+    model.fit(X_train, y_train, batch_size=32, epochs=50, validation_split=0.2, callbacks=[early_stopping])
+
+    y_pred = model.predict(X_test)
+    y_pred_classes = np.argmax(y_pred, axis=1)
+    y_test_classes = np.argmax(y_test, axis=1)
+    accuracy = accuracy_score(y_test_classes, y_pred_classes)
+    print(f'Training Accuracy: {accuracy}')
+
+    return model
 
 # 테스트 데이터 로드
-def load_test_data(folder_path, scaler):
+def load_test_data(folder_path, fixed_length=50):
     features = []
     labels = []
     for label in ['real', 'fake']:
@@ -104,34 +111,33 @@ def load_test_data(folder_path, scaler):
             if file_name.endswith('.wav'):
                 file_path = os.path.join(label_path, file_name)
                 y, sr = load_audio(file_path)
-                feature = extract_features(y, sr)
+                feature = extract_features(y, sr, fixed_length=fixed_length)
                 features.append(feature)
                 labels.append(0 if label == 'real' else 1)
-    X_test = np.array(features)
-    X_test = scaler.transform(X_test)
-    return X_test, np.array(labels)
-
+    return np.array(features), np.array(labels)
 
 # 테스트 데이터 정확도 계산
 def evaluate_model(model, X_test, y_test):
+    y_test = to_categorical(y_test, num_classes=2)
     y_pred = model.predict(X_test)
-    accuracy = accuracy_score(y_test, y_pred)
+    y_pred_classes = np.argmax(y_pred, axis=1)
+    y_test_classes = np.argmax(y_test, axis=1)
+    accuracy = accuracy_score(y_test_classes, y_pred_classes)
     print(f'Test Accuracy: {accuracy}')
     return accuracy
 
-
 # 폴더 경로 설정
-train_folder_path = 'audio_dataset'  # 'audio_dataset/real' 및 'audio_dataset/fake' 하위 폴더 포함
-test_folder_path = 'test_data'  # 'test_data/real' 및 'test_data/fake' 하위 폴더 포함
+train_folder_path = '/content/drive/MyDrive/Data'  # 'audio_dataset/real' 및 'audio_dataset/fake' 하위 폴더 포함
+test_folder_path = '/content/drive/MyDrive/testing'  # 'test_data/real' 및 'test_data/fake' 하위 폴더 포함
 
 # 훈련 데이터 로드
 X_train, y_train = load_data(train_folder_path)
 
 # 모델 훈련
-model, scaler = train_model(X_train, y_train)
+model = train_model(X_train, y_train)
 
 # 테스트 데이터 로드
-X_test, y_test = load_test_data(test_folder_path, scaler)
+X_test, y_test = load_test_data(test_folder_path)
 
 # 모델 평가
 evaluate_model(model, X_test, y_test)
