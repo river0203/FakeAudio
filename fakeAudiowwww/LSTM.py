@@ -1,30 +1,51 @@
+import numpy as np
 import pandas as pd
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import SVC
-import joblib
-from sklearn.model_selection import GridSearchCV
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
 
-def train_and_predict_svm(X_train, y_train, X_test=None, return_model=False):
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
 
-    param_grid = {
-        'C': [0.1, 1, 10, 100],
-        'gamma': [1, 0.1, 0.01, 0.001],
-        'kernel': ['linear', 'rbf']
-    }
+def load_and_preprocess_data(file_path):
+    df = pd.read_csv(file_path)
+    X = df.drop(['filename', 'voice_type'], axis=1)
+    y = df['voice_type']
 
-    grid = GridSearchCV(SVC(), param_grid, refit=True, verbose=2)
-    grid.fit(X_train_scaled, y_train)
+    X = StandardScaler().fit_transform(X)
+    X = X.reshape(X.shape[0], 1, X.shape[1])
+    y = to_categorical(y.map({'REAL': 0, 'AI': 1}))
 
-    model = grid.best_estimator_
+    return train_test_split(X, y, test_size=0.2, random_state=42)
 
-    joblib.dump(model, 'svm_model.pkl')
-    joblib.dump(scaler, 'scaler_svm.pkl')
 
-    if return_model:
-        return model, scaler
+def create_lstm_model(input_shape):
+    model = Sequential([
+        LSTM(64, input_shape=input_shape, return_sequences=True),
+        LSTM(32),
+        Dense(16, activation='relu'),
+        Dropout(0.5),
+        Dense(2, activation='softmax')
+    ])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
 
-    if X_test is not None:
-        X_test_scaled = scaler.transform(X_test)
-        return model.predict(X_test_scaled)
+
+def train_lstm_model(file_path):
+    X_train, X_test, y_train, y_test = load_and_preprocess_data(file_path)
+    model = create_lstm_model((X_train.shape[1], X_train.shape[2]))
+    model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, verbose=1)
+
+    loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
+    print(f"LSTM Model - Test Accuracy: {accuracy:.4f}")
+
+    # 모델 저장
+    model.save('lstm_model.h5')
+    print("LSTM model saved as lstm_model.h5")
+
+    return model
+
+if __name__ == "__main__":
+    file_path = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/UpgradePreProcessResult.csv'
+    train_lstm_model(file_path)

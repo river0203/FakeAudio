@@ -1,83 +1,55 @@
-import os
-import pandas as pd
 import numpy as np
-from sklearn.metrics import classification_report, accuracy_score
-import joblib
-import torch
-from RNN import RNNModel
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
 
-# 파일 경로
-test_data_path_with_labels = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/testDataCsv/testDataFeatureExtraction1234.csv'
-model_load_path = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/models/'
 
-# 테스트 데이터 로드
-test_data_with_labels = pd.read_csv(test_data_path_with_labels)
-# 특징과 라벨 분리 (테스트 데이터)
-X_test = test_data_with_labels.drop(['filename', 'voice_type'], axis=1)
-y_test = test_data_with_labels['voice_type'].apply(lambda x: 1 if x == 'AI' else 0)
+def load_and_preprocess_data(file_path):
+    df = pd.read_csv(file_path)
+    X = df.drop(['filename', 'voice_type'], axis=1)
+    y = df['voice_type']
 
-# 모델 불러오기
-xgb_model = joblib.load(os.path.join(model_load_path, 'xgb_model.pkl'))
-lgb_model = joblib.load(os.path.join(model_load_path, 'lgb_model.pkl'))
-scaler_rnn = joblib.load(os.path.join(model_load_path, 'scaler_rnn.pkl'))
+    X = StandardScaler().fit_transform(X)
+    X = X.reshape(X.shape[0], X.shape[1], 1)
+    y = to_categorical(y.map({'REAL': 0, 'AI': 1}))
 
-# RNN 모델 정의 및 불러오기
-input_dim = X_test.shape[1]
-hidden_dim = 256
-output_dim = 1
+    return train_test_split(X, y, test_size=0.2, random_state=42)
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-rnn_model = RNNModel(input_dim, hidden_dim, output_dim).to(device)
-rnn_model.load_state_dict(torch.load(os.path.join(model_load_path, 'rnn_model.h5')))
-rnn_model.eval()
 
-# RNN 모델 예측 준비
-X_test_scaled = scaler_rnn.transform(X_test)
-X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float32).unsqueeze(1).to(device)
+def create_cnn_model(input_shape):
+    model = Sequential([
+        Conv1D(64, 3, activation='relu', input_shape=input_shape),
+        MaxPooling1D(2),
+        Conv1D(128, 3, activation='relu'),
+        MaxPooling1D(2),
+        Flatten(),
+        Dense(128, activation='relu'),
+        Dropout(0.5),
+        Dense(2, activation='softmax')
+    ])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
 
-# RNN 예측 수행
-with torch.no_grad():
-    rnn_outputs = rnn_model(X_test_tensor)
-    rnn_pred = (torch.sigmoid(rnn_outputs).cpu().numpy() > 0.5).astype(int).squeeze()
 
-# 다른 모델의 예측 수행
-xgb_pred = xgb_model.predict(X_test)
-lgb_pred = lgb_model.predict(X_test)
+def train_cnn_model(file_path):
+    X_train, X_test, y_train, y_test = load_and_preprocess_data(file_path)
+    model = create_cnn_model((X_train.shape[1], 1))
+    model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, verbose=1)
 
-# 각 모델의 성능 평가
-xgb_accuracy = accuracy_score(y_test, xgb_pred)
-lgb_accuracy = accuracy_score(y_test, lgb_pred)
-rnn_accuracy = accuracy_score(y_test, rnn_pred)
+    loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
+    print(f"CNN Model - Test Accuracy: {accuracy:.4f}")
 
-print(f"XGBoost Accuracy: {xgb_accuracy}")
-print(f"LightGBM Accuracy: {lgb_accuracy}")
-print(f"RNN Accuracy: {rnn_accuracy}")
+    # 모델 저장
+    model.save('cnn_model.h5')
+    print("CNN model saved as cnn_model.h5")
 
-# 다수결 방식으로 최종 예측 결정
-final_pred = []
-for xgb, lgb, rnn in zip(xgb_pred, lgb_pred, rnn_pred):
-    votes = [xgb, lgb, rnn]
-    final_pred.append(1 if votes.count(1) > votes.count(0) else 0)
+    return model
 
-final_pred = np.array(final_pred)
 
-# 예측 결과를 AI와 REAL로 변환
-final_pred_labels = ['AI' if pred == 1 else 'REAL' for pred in final_pred]
-
-# 최종 결과 CSV 파일 생성
-result_df = pd.DataFrame({
-    'filename': test_data_with_labels['filename'],
-    'true_label': test_data_with_labels['voice_type'],
-    'xgb_pred': ['AI' if pred == 1 else 'REAL' for pred in xgb_pred],
-    'lgb_pred': ['AI' if pred == 1 else 'REAL' for pred in lgb_pred],
-    'rnn_pred': ['AI' if pred == 1 else 'REAL' for pred in rnn_pred],
-    'final_pred': final_pred_labels
-})
-
-result_df_path = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/testDataResult/testDataFeatureExtraction1234_final.csv'
-os.makedirs(os.path.dirname(result_df_path), exist_ok=True)
-result_df.to_csv(result_df_path, index=False)
-
-# 평가 결과 출력
-print(classification_report(y_test, final_pred, target_names=['REAL', 'AI'], zero_division=0))
-print('Final Accuracy with Voting Ensemble:', accuracy_score(y_test, final_pred))
+if __name__ == "__main__":
+    file_path = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/UpgradePreProcessResult.csv'
+    train_cnn_model(file_path)
