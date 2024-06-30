@@ -7,13 +7,9 @@ from tqdm import tqdm
 
 # 분석할 폴더 경로
 input_folders = [
-    'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/mitRealAudio',
-    'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/realAudio1',
-    'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/mitFakeAudio/fakeAudio',
-    'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/mitFakeAudio/fakeAudio2',
-    'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/fakeAudio'
+    r"C:\Users\tjdwn\OneDrive\Desktop\AIVoiceFile\testData"
 ]
-output_file = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/UpgradePreProcessResult.csv'
+output_file = r"C:\Users\tjdwn\OneDrive\Desktop\AIVoiceFile\testDataCsv/testDataPreprocess.csv"
 
 # 출력 폴더가 없으면 생성
 output_folder = os.path.dirname(output_file)

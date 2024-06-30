@@ -1,63 +1,51 @@
-import torch
-import torch.nn as nn
-import torch.optim as optim
 import numpy as np
-import joblib
+import pandas as pd
+from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from tqdm import tqdm
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Conv1D, MaxPooling1D, Flatten, Dense, Dropout
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.utils import to_categorical
 
-class RNNModel(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim):
-        super(RNNModel, self).__init__()
-        self.rnn = nn.RNN(input_dim, hidden_dim, batch_first=True)
-        self.fc = nn.Linear(hidden_dim, output_dim)
 
-    def forward(self, x):
-        h0 = torch.zeros(1, x.size(0), self.rnn.hidden_size).to(x.device)
-        out, _ = self.rnn(x, h0)
-        out = self.fc(out[:, -1, :])
-        return out
+def load_and_preprocess_data(file_path):
+    df = pd.read_csv(file_path)
+    X = df.drop(['filename', 'voice_type'], axis=1)
+    y = df['voice_type']
 
-def train_and_predict_rnn(X_train, y_train, X_test, num_epochs=30, learning_rate=0.0005, hidden_dim=256, return_model=False):
-    input_dim = X_train.shape[1]
-    output_dim = 1
+    X = StandardScaler().fit_transform(X)
+    X = X.reshape(X.shape[0], X.shape[1], 1)
+    y = to_categorical(y.map({'REAL': 0, 'AI': 1}))
 
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    return train_test_split(X, y, test_size=0.2, random_state=42)
 
-    model = RNNModel(input_dim, hidden_dim, output_dim).to(device)
-    criterion = nn.BCEWithLogitsLoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
+def create_cnn_model(input_shape):
+    model = Sequential([
+        Conv1D(64, 3, activation='relu', input_shape=input_shape),
+        MaxPooling1D(2),
+        Conv1D(128, 3, activation='relu'),
+        MaxPooling1D(2),
+        Flatten(),
+        Dense(128, activation='relu'),
+        Dropout(0.5),
+        Dense(2, activation='softmax')
+    ])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
 
-    X_train_tensor = torch.tensor(X_train_scaled, dtype=torch.float32).unsqueeze(1)
-    y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32).unsqueeze(1)
-    X_test_tensor = torch.tensor(X_test_scaled, dtype=torch.float32).unsqueeze(1)
 
-    train_loader = torch.utils.data.DataLoader(torch.utils.data.TensorDataset(X_train_tensor, y_train_tensor),
-                                               batch_size=32, shuffle=True)
+def train_cnn_model(file_path):
+    X_train, X_test, y_train, y_test = load_and_preprocess_data(file_path)
+    model = create_cnn_model((X_train.shape[1], 1))
+    model.fit(X_train, y_train, epochs=50, batch_size=32, validation_split=0.2, verbose=1)
 
-    model.train()
-    for epoch in tqdm(range(num_epochs), desc="Training RNN"):
-        for X_batch, y_batch in train_loader:
-            X_batch, y_batch = X_batch.to(device), y_batch.to(device)
-            optimizer.zero_grad()
-            outputs = model(X_batch)
-            loss = criterion(outputs, y_batch)
-            loss.backward()
-            optimizer.step()
+    loss, accuracy = model.evaluate(X_test, y_test, verbose=0)
+    print(f"CNN Model - Test Accuracy: {accuracy:.4f}")
 
-    model.eval()
-    with torch.no_grad():
-        rnn_outputs = model(X_test_tensor.to(device))
-        rnn_pred = (torch.sigmoid(rnn_outputs).cpu().numpy() > 0.5).astype(int).squeeze()
+    return model
 
-    if return_model:
-        return model, scaler
 
-    torch.save(model.state_dict(), 'rnn_model.h5')
-    joblib.dump(scaler, 'scaler_rnn.pkl')
-
-    return rnn_pred
+if __name__ == "__main__":
+    file_path = 'C:/Users/tjdwn/OneDrive/Desktop/AIVoiceFile/preProcess/UpgradePreProcessResult.csv'
+    train_cnn_model(file_path)
