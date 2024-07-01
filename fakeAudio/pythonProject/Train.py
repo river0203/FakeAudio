@@ -1,13 +1,11 @@
 import os
-import librosa
 import numpy as np
+import librosa
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Conv2D, MaxPooling2D, Flatten, Dropout
 from tensorflow.keras.utils import to_categorical
-from tensorflow.keras.callbacks import EarlyStopping
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 
 # 오디오 데이터 로드
@@ -17,17 +15,14 @@ def load_audio(file_path):
 
 # 데이터 증강
 def augment_data(y, sr):
-    # Noise addition
+    # 노이즈 추가
     noise = np.random.randn(len(y))
     y_noise = y + 0.005 * noise
 
-    # Shifting the sound
+    # 소리 이동
     y_roll = np.roll(y, 1600)
 
-    # Pitch shifting
-    y_pitch = librosa.effects.pitch_shift(y, sr=sr, n_steps=2)
-
-    return [y, y_noise, y_roll, y_pitch]
+    return [y, y_noise, y_roll]
 
 # MFCC 및 추가 특징 추출
 def extract_features(y, sr, n_mfcc=13, fixed_length=50):
@@ -39,23 +34,20 @@ def extract_features(y, sr, n_mfcc=13, fixed_length=50):
         mfccs = mfccs[:, :fixed_length]
     return np.expand_dims(mfccs, axis=-1)
 
-# 데이터 로드 및 특징 추출
-def load_data(folder_path, fixed_length=50):
+# 폴더에서 데이터 로드 및 특징 추출
+def load_data_from_folder(folder_path, fixed_length=50):
     features = []
     labels = []
-    for label in ['real', 'fake']:
-        label_path = os.path.join(folder_path, label)
-        if not os.path.isdir(label_path):
-            continue
-        for file_name in os.listdir(label_path):
-            if file_name.endswith('.wav'):
-                file_path = os.path.join(label_path, file_name)
-                y, sr = load_audio(file_path)
-                augmented_data = augment_data(y, sr)
-                for y_aug in augmented_data:
-                    feature = extract_features(y_aug, sr, fixed_length=fixed_length)
-                    features.append(feature)
-                    labels.append(0 if label == 'real' else 1)
+    for file_name in os.listdir(folder_path):
+        if file_name.endswith('.ogg'):
+            file_path = os.path.join(folder_path, file_name)
+            label = 'real' if 'real' in file_name.lower() else 'fake'
+            y, sr = load_audio(file_path)
+            augmented_data = augment_data(y, sr)
+            for y_aug in augmented_data:
+                feature = extract_features(y_aug, sr, fixed_length=fixed_length)
+                features.append(feature)
+                labels.append(0 if label == 'real' else 1)
     return np.array(features), np.array(labels)
 
 # CNN 모델 생성
@@ -87,9 +79,7 @@ def train_model(X, y):
     input_shape = (X_train.shape[1], X_train.shape[2], X_train.shape[3])
     model = create_cnn_model(input_shape)
 
-    early_stopping = EarlyStopping(monitor='val_loss', patience=5, restore_best_weights=True)
-
-    model.fit(X_train, y_train, batch_size=32, epochs=50, validation_split=0.2, callbacks=[early_stopping])
+    model.fit(X_train, y_train, batch_size=32, epochs=20, validation_split=0.2)
 
     y_pred = model.predict(X_test)
     y_pred_classes = np.argmax(y_pred, axis=1)
@@ -100,21 +90,8 @@ def train_model(X, y):
     return model
 
 # 테스트 데이터 로드
-def load_test_data(folder_path, fixed_length=50):
-    features = []
-    labels = []
-    for label in ['real', 'fake']:
-        label_path = os.path.join(folder_path, label)
-        if not os.path.isdir(label_path):
-            continue
-        for file_name in os.listdir(label_path):
-            if file_name.endswith('.wav'):
-                file_path = os.path.join(label_path, file_name)
-                y, sr = load_audio(file_path)
-                feature = extract_features(y, sr, fixed_length=fixed_length)
-                features.append(feature)
-                labels.append(0 if label == 'real' else 1)
-    return np.array(features), np.array(labels)
+def load_test_data_from_folder(folder_path, fixed_length=50):
+    return load_data_from_folder(folder_path, fixed_length)
 
 # 테스트 데이터 정확도 계산
 def evaluate_model(model, X_test, y_test):
@@ -127,17 +104,17 @@ def evaluate_model(model, X_test, y_test):
     return accuracy
 
 # 폴더 경로 설정
-train_folder_path = '/content/drive/MyDrive/Data'  # 'audio_dataset/real' 및 'audio_dataset/fake' 하위 폴더 포함
-test_folder_path = '/content/drive/MyDrive/testing'  # 'test_data/real' 및 'test_data/fake' 하위 폴더 포함
+train_folder_path = r'C:\Users\aspp3\Downloads\open\train'  # real 및 fake 오디오 파일이 섞여있는 폴더
+test_folder_path = r'C:\Users\aspp3\Downloads\open\test'    # real 및 fake 오디오 파일이 섞여있는 폴더
 
 # 훈련 데이터 로드
-X_train, y_train = load_data(train_folder_path)
+X_train, y_train = load_data_from_folder(train_folder_path)
 
 # 모델 훈련
 model = train_model(X_train, y_train)
 
 # 테스트 데이터 로드
-X_test, y_test = load_test_data(test_folder_path)
+X_test, y_test = load_test_data_from_folder(test_folder_path)
 
 # 모델 평가
 evaluate_model(model, X_test, y_test)
